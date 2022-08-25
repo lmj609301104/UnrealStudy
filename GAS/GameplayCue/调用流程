@@ -1,0 +1,36 @@
+UGameplayAbility::K2_AddGameplayCue或者K2_AddGameplayCueWithParams
+UAbilitySystemComponent::AddGameplayCue(const FGameplayTag GameplayCueTag, const FGameplayCueParameters& GameplayCueParameters)
+UAbilitySystemComponent::AddGameplayCue_Internal(const FGameplayTag GameplayCueTag, const FGameplayCueParameters& GameplayCueParameters, FActiveGameplayCueContainer& GameplayCueContainer);
+{
+  // DS or Standalone
+  if (IsOwnerActorAuthoritative())
+  {
+    GameplayCueContainer.AddCue(GameplayCueTag, ScopedPredictionKey, GameplayCueParameters);
+    
+    // 通过Muticast在服务器和各个客户端上触发OnActive事件
+    if (IAbilitySystemReplicationProxyInterface* ReplicationInterface = GetReplicationInterface())
+    {
+      ReplicationInterface->Call_InvokeGameplayCueAdded_WithParams(GameplayCueTag, PredictionKeyForRPC, GameplayCueParameters);
+    }
+    
+    if (!bWasInList)
+		{
+			// 服务端上直接调用WhileActive事件，客户端的WhileActive事件由GameplayCueContainer同步触发(PostReplicatedAdd())
+			InvokeGameplayCueEvent(GameplayCueTag, EGameplayCueEvent::WhileActive, GameplayCueParameters);
+		}
+  }
+  // Client
+  else if (ScopedPredictionKey.IsLocalClientKey())
+  {
+    // PK是客户端预测的话，在客户端上只是给ASC组件为这个GameplayTag计数+1，不会把这个Tag添加到GameplayCueContainer中
+    // 内部还会绑定PredictionKey的NewRejectOrCaughtUpDelegate，无论DS上返回GA激活成功与否，都会给ASC这个Tag计数-1，为0则会给Cue调用Remove事件
+    // DS上对应的Cue添加同步到客户端触发PostReplicatedAdd，会为这个GameplayTag计数+1
+    // 疑惑：PredictionKey的确认/拒绝回调应该会比Cue添加同步回调更快，这样会导致Cue中途remove，后再添加的情况？
+    GameplayCueContainer.PredictiveAdd(GameplayCueTag, ScopedPredictionKey);
+    
+
+    // Allow for predictive gameplaycue events? Needs more thought
+    InvokeGameplayCueEvent(GameplayCueTag, EGameplayCueEvent::OnActive, GameplayCueParameters);
+    InvokeGameplayCueEvent(GameplayCueTag, EGameplayCueEvent::WhileActive, GameplayCueParameters);
+  }
+}
